@@ -58,10 +58,10 @@
 請以你的 Fritzing 檔為主：  
 [Oxygen_Saturation.fzz](D:/OneDrive/00_待辦工作與計畫/20260612-國中生到校試探-血氧偵測計_esp32/Oxygen_Saturation.fzz)
 
-本程式可確定的關鍵腳位如下：
+本程式可確定的關鍵腳位如下（依 `esp32_實體.png` 板上絲印）：
 
 - 蜂鳴器訊號腳：`GPIO 4`（`Tonepin = 4`）
-- I2C 匯流排：使用 `Wire` 預設腳位（ESP32 常見為 `SDA=21`、`SCL=22`）
+- I2C 匯流排：使用板上的 `SDA`、`SCL` 腳位
 - OLED 位址：`0x3C`
 
 一般接線原則：
@@ -72,24 +72,25 @@
 
 ## 3.1 元件與 ESP32 接腳對應表
 
-> 以下對應以目前程式 (`Wire` 預設 + `Tonepin=4`) 為準。
+> 以下對應以目前程式（`Wire` + `Tonepin=4`）與 `esp32_實體.png` 的板上絲印為準。
 
 | 元件 | 元件腳位 | ESP32 腳位 | 說明 |
 |---|---|---|---|
 | MAX30105 | VIN / 3V3 | 3V3 | 感測器供電 |
 | MAX30105 | GND | GND | 地線（需與所有模組共地） |
-| MAX30105 | SDA | GPIO 21（SDA） | I2C 資料線 |
-| MAX30105 | SCL | GPIO 22（SCL） | I2C 時脈線 |
+| MAX30105 | SDA | SDA（板上絲印） | I2C 資料線 |
+| MAX30105 | SCL | SCL（板上絲印） | I2C 時脈線 |
 | OLED 0.96" | VCC | 3V3 | 螢幕供電 |
 | OLED 0.96" | GND | GND | 地線 |
-| OLED 0.96" | SDA | GPIO 21（SDA） | 與 MAX30105 並聯同一組 I2C |
-| OLED 0.96" | SCL | GPIO 22（SCL） | 與 MAX30105 並聯同一組 I2C |
+| OLED 0.96" | SDA | SDA（板上絲印） | 與 MAX30105 並聯同一組 I2C |
+| OLED 0.96" | SCL | SCL（板上絲印） | 與 MAX30105 並聯同一組 I2C |
 | 無源蜂鳴器 | 正極（+） | GPIO 4 | 程式 `tone(Tonepin, ...)` 控制 |
 | 無源蜂鳴器 | 負極（-） | GND | 地線 |
 
 補充：
 
-- 若你的 ESP32 板型 I2C 預設不是 `GPIO 21/22`，可改用 `Wire.begin(SDA, SCL)` 指定腳位。  
+- 你的實體板右側可直接看到 `SDA`、`SCL` 絲印，教學接線請優先對照這兩個腳位。  
+- 若日後改用其他 ESP32 板型，可用 `Wire.begin(SDA, SCL)` 指定 I2C 腳位。  
 - OLED 與 MAX30105 都是 I2C 裝置，可共用同一組 SDA/SCL。  
 
 ---
