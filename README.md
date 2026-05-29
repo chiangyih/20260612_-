@@ -70,6 +70,28 @@
 2. MAX30105 `SDA`、`SCL` 與 OLED `SDA`、`SCL` 並聯到 ESP32 I2C。  
 3. 無源蜂鳴器 `+` 接 `GPIO 4`，`-` 接 `GND`。  
 
+## 3.1 元件與 ESP32 接腳對應表
+
+> 以下對應以目前程式 (`Wire` 預設 + `Tonepin=4`) 為準。
+
+| 元件 | 元件腳位 | ESP32 腳位 | 說明 |
+|---|---|---|---|
+| MAX30105 | VIN / 3V3 | 3V3 | 感測器供電 |
+| MAX30105 | GND | GND | 地線（需與所有模組共地） |
+| MAX30105 | SDA | GPIO 21（SDA） | I2C 資料線 |
+| MAX30105 | SCL | GPIO 22（SCL） | I2C 時脈線 |
+| OLED 0.96" | VCC | 3V3 | 螢幕供電 |
+| OLED 0.96" | GND | GND | 地線 |
+| OLED 0.96" | SDA | GPIO 21（SDA） | 與 MAX30105 並聯同一組 I2C |
+| OLED 0.96" | SCL | GPIO 22（SCL） | 與 MAX30105 並聯同一組 I2C |
+| 無源蜂鳴器 | 正極（+） | GPIO 4 | 程式 `tone(Tonepin, ...)` 控制 |
+| 無源蜂鳴器 | 負極（-） | GND | 地線 |
+
+補充：
+
+- 若你的 ESP32 板型 I2C 預設不是 `GPIO 21/22`，可改用 `Wire.begin(SDA, SCL)` 指定腳位。  
+- OLED 與 MAX30105 都是 I2C 裝置，可共用同一組 SDA/SCL。  
+
 ---
 
 ## 4. 開發環境與函式庫
@@ -353,6 +375,321 @@ void loop() {
 
 ---
 
+## 5.1 加註解版程式碼（教學對照）
+
+以下為已加上詳細正體中文註解的版本，與專案目前 `main.cpp` 同步，方便學生逐段閱讀：
+
+```cpp
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include "MAX30105.h"
+#include "heartRate.h"
+
+// 某些平台/核心版本可能未定義 IRAM_ATTR，先做相容性處理
+#ifndef IRAM_ATTR
+#define IRAM_ATTR
+#endif
+
+// =========================
+// OLED 顯示器參數設定
+// =========================
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+#define OLED_ADDR 0x3C
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// =========================
+// 硬體物件與狀態旗標
+// =========================
+// 無源蜂鳴器接在 GPIO4（每次偵測到有效心跳時短鳴）
+const int Tonepin = 4; 
+// MAX30105 感測器物件
+MAX30105 particleSensor;
+// OLED 是否初始化成功
+bool oledReady = false;
+// 感測器是否初始化成功
+bool sensorReady = false;
+
+// =========================
+// 量測參數與演算法變數
+// =========================
+// IR 值高於此門檻，視為「手指已放上感測器」
+#define FINGER_ON 7000          
+// 顯示上的最低血氧下限（避免不合理低值造成教學干擾）
+#define MINIMUM_SPO2 90.0   
+
+// 心跳移動平均緩衝區大小（取最近 8 次有效 BPM）
+const byte RATE_SIZE = 8;
+byte rates[RATE_SIZE];
+byte rateSpot = 0;        // 寫入緩衝區的位置
+byte validRateCount = 0;  // 目前已有多少有效心跳樣本（最多 RATE_SIZE）
+long lastBeat = 0;        // 上一次偵測到心跳的時間戳（ms）
+float beatsPerMinute = 0; // 單次計算出的 BPM
+int beatAvg = 0;          // 平滑後（移動平均）的 BPM
+
+// SpO2 計算使用的取樣與統計變數
+int sampleCount = 0;
+const int numSamples = 30; // 累積 30 筆再計算一次 SpO2
+double avered = 0, aveir = 0;
+double sumirrms = 0, sumredrms = 0;
+double SpO2 = 0, ESpO2 = 90.0;
+const double FSpO2 = 0.7; // SpO2 顯示平滑係數（越大越穩、反應越慢）
+const double frate = 0.95; // Red/IR 基線（DC）指數平滑係數
+
+// 螢幕更新節流（避免過度刷新）
+unsigned long lastDisplayUpdate = 0;
+const unsigned long DISPLAY_INTERVAL = 250; // 刷新250ms
+
+// =========================
+// 工具函式
+// =========================
+// 重置所有量測狀態（手指離開感測器時呼叫）
+void resetReadings() {
+  for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
+  rateSpot = 0;
+  validRateCount = 0;
+  lastBeat = 0;
+  beatsPerMinute = 0;
+  beatAvg = 0;
+
+  sampleCount = 0;
+  avered = 0;
+  aveir = 0;
+  sumirrms = 0;
+  sumredrms = 0;
+  SpO2 = 0;
+  ESpO2 = 90.0;
+}
+
+// 置中顯示文字（方便畫面排版）
+void printCentered(const char *text, int y, int textSize) {
+  display.setTextSize(textSize);
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(text, 0, y, &x1, &y1, &w, &h);
+  display.setCursor((SCREEN_WIDTH - w) / 2, y);
+  display.print(text);
+}
+
+// 開機/錯誤提示畫面
+void drawBootScreen(const char *line1, const char *line2) {
+  if (!oledReady) return;
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  printCentered(line1, 16, 1);
+  printCentered(line2, 34, 1);
+  display.display();
+}
+
+// 主畫面繪製：依「是否有手指」切換顯示內容
+void drawMainScreen(bool fingerOn) {
+  if (!oledReady) return;
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextWrap(false);
+
+  // 未放手指：顯示提示文字
+  if (!fingerOn) {
+    printCentered("PULSE OXIMETER", 2, 1);
+    display.drawFastHLine(0, 13, 128, SSD1306_WHITE);
+    printCentered("PLACE FINGER", 26, 1);
+    printCentered("ON SENSOR", 42, 1);
+    display.display();
+    return;
+  }
+
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("SpO2");
+  display.setCursor(93, 0);
+  display.print("BPM");
+  display.drawFastHLine(0, 10, 128, SSD1306_WHITE);
+
+  // 左側顯示 SpO2：當心跳平均值足夠且血氧估算有效時才顯示數字
+  display.setTextSize(3);
+  display.setCursor(0, 20);
+  if (beatAvg > 30 && ESpO2 >= 90.0) {
+    display.print((int)(ESpO2 + 0.5));
+  } else {
+    display.print("--");
+  }
+
+  display.setTextSize(2);
+  display.setCursor(48, 28);
+  display.print("%");
+
+  display.drawFastVLine(70, 12, 52, SSD1306_WHITE);
+  display.setTextSize(3);
+  display.setCursor(78, 20);
+  if (beatAvg > 0) {
+    if (beatAvg < 100) display.print(" ");
+    display.print(beatAvg);
+  } else {
+    display.print("--");
+  }
+
+  // 底部狀態提示：心跳剛開始抓到前顯示 Measuring，穩定後提醒保持不動
+  display.setTextSize(1);
+  display.setCursor(0, 56);
+  if (beatAvg > 30) {
+    display.print("Keep still");
+  } else {
+    display.print("Measuring...");
+  }
+
+  // 右下角心跳指示點：在最近一次心跳後 180ms 內填滿，否則只畫空心圓
+  if (millis() - lastBeat < 180) {
+    display.fillCircle(122, 58, 3, SSD1306_WHITE);
+  } else {
+    display.drawCircle(122, 58, 3, SSD1306_WHITE);
+  }
+
+  display.display();
+}
+
+// =========================
+// 系統初始化
+// =========================
+void setup() {
+  Serial.begin(115200); 
+
+  // 初始化 OLED，失敗時改用序列埠提示
+  oledReady = display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
+  if (oledReady) {
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    drawBootScreen("Hello", "Starting...");
+  } else {
+    Serial.println("OLED not found. Check I2C address/wiring.");
+  }
+
+  // 初始化 MAX30105，失敗則顯示錯誤並停止後續量測
+  if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
+    Serial.println("MAX30105 was not found. Check wiring/power.");
+    drawBootScreen("SENSOR ERROR", "CHECK WIRING");
+    return;
+  }
+
+  sensorReady = true;
+
+  // 感測器設定：
+  // setup(ledBrightness, sampleAverage, ledMode, sampleRate, pulseWidth, adcRange)
+  // ledMode=2 代表使用 Red + IR（血氧估算需要）
+  particleSensor.setup(0x7F, 4, 2, 800, 215, 16384);
+  particleSensor.enableDIETEMPRDY();
+  // Red/IR LED 強度（可依手指反射狀況微調）
+  particleSensor.setPulseAmplitudeRed(0x24);
+  particleSensor.setPulseAmplitudeIR(0x24);
+  // 關閉 Green LED，避免不必要耗電/干擾
+  particleSensor.setPulseAmplitudeGreen(0);
+
+  delay(800);
+  drawMainScreen(false);
+}
+
+// =========================
+// 主迴圈
+// =========================
+void loop() {
+  // 若初始化失敗，避免空跑
+  if (!sensorReady) {
+    delay(1000);
+    return;
+  }
+
+  // 先用 IR 值判斷是否有手指接觸
+  long irValue = particleSensor.getIR();
+  bool fingerOn = (irValue > FINGER_ON);
+
+  if (fingerOn) {
+    // ---------- 心跳偵測與 BPM 計算 ----------
+    if (checkForBeat(irValue)) {
+      long delta = millis() - lastBeat;
+      lastBeat = millis();
+
+      // BPM = 60 / 心跳週期（秒）
+      beatsPerMinute = 60.0 / (delta / 1000.0);
+
+      // 過濾不合理區間，避免雜訊誤判
+      if (beatsPerMinute > 20 && beatsPerMinute < 255) {
+        // 寫入環狀緩衝區
+        rates[rateSpot++] = (byte)beatsPerMinute;
+        rateSpot %= RATE_SIZE;
+        if (validRateCount < RATE_SIZE) validRateCount++;
+
+        // 計算最近幾次有效心跳平均（平滑 BPM）
+        int total = 0;
+        for (byte i = 0; i < validRateCount; i++) total += rates[i];
+        beatAvg = total / validRateCount;
+
+        // 每次有效心跳短鳴提示
+        tone(Tonepin, 1000, 10);
+      }
+    }
+
+    // ---------- 讀取 FIFO 並估算 SpO2 ----------
+    // check() 會更新內部 FIFO 緩衝狀態
+    particleSensor.check();
+    while (particleSensor.available()) {
+      // 讀出 Red / IR 原始光訊號
+      uint32_t red = particleSensor.getFIFORed();
+      uint32_t ir = particleSensor.getFIFOIR();
+
+      double fred = (double)red;
+      double fir = (double)ir;
+
+      avered = avered * frate + fred * (1.0 - frate);
+      aveir = aveir * frate + fir * (1.0 - frate);
+
+      // 累積 AC 能量（以偏離基線的平方和近似）
+      sumredrms += (fred - avered) * (fred - avered);
+      sumirrms += (fir - aveir) * (fir - aveir);
+
+      sampleCount++;
+      if (sampleCount >= numSamples) {
+        // 防止除以零與異常值
+        if (avered > 0 && aveir > 0 && sumirrms > 0) {
+          // Ratio-of-ratios：
+          // R = (ACred/DCred) / (ACir/DCir)
+          double R = (sqrt(sumredrms) / avered) / (sqrt(sumirrms) / aveir);
+          // 經驗公式估算 SpO2（教學示範用）
+          SpO2 = -23.3 * (R - 0.4) + 100.0;
+          // 輸出再做一次平滑，降低跳動
+          ESpO2 = FSpO2 * ESpO2 + (1.0 - FSpO2) * SpO2;
+
+          // 限制顯示範圍，避免出現不合理值
+          if (ESpO2 <= MINIMUM_SPO2) ESpO2 = MINIMUM_SPO2;
+          if (ESpO2 > 100.0) ESpO2 = 99.9;
+        }
+
+        // 重置本輪 RMS 累積，開始下一批樣本
+        sumredrms = 0.0;
+        sumirrms = 0.0;
+        sampleCount = 0;
+      }
+
+      // 移到 FIFO 下一筆
+      particleSensor.nextSample();
+    }
+  } else {
+    // 手指離開後，清空量測狀態，避免舊值殘留
+    resetReadings();
+  }
+
+  // 控制更新頻率（每 250ms 更新一次畫面）
+  if (millis() - lastDisplayUpdate >= DISPLAY_INTERVAL) {
+    drawMainScreen(fingerOn);
+    lastDisplayUpdate = millis();
+  }
+}
+```
+
+---
+
 ## 6. 程式碼重點解說
 
 ## 6.1 顯示器與硬體初始化
@@ -442,4 +779,3 @@ void loop() {
 - 這是教學型專題，不可作為醫療診斷。  
 - 不要以單次讀值作結論，需多次量測與交叉比對。  
 - 課堂上應強調「訊號品質」對量測結果的影響。
-
