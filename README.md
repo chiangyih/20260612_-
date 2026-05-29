@@ -1,5 +1,5 @@
 # ESP32 血氧濃度偵測計詳細教學（MAX30105 + OLED + 無源蜂鳴器）
-https://chatgpt.com/s/m_6a18fc9aac048191a47b4af6da134b19
+-<img width="960" height="540" alt="image" src="https://chatgpt.com/s/m_6a18fc9aac048191a47b4af6da134b19" />
 本教學使用以下元件製作血氧濃度（SpO2）與心跳（BPM）顯示器，適合國中生到校試探課程：
 
 - ESP32 開發板
