@@ -2,16 +2,25 @@
 
 本教學使用以下元件製作血氧濃度（SpO2）與心跳（BPM）顯示器，適合國中生到校試探課程：
 
-- ESP32 開發板  
-- MAX30105 感測器  
-- 0.96 吋 128x64 I2C OLED（位址 `0x3C`）  
+- ESP32 開發板
+- <img width="292" height="642" alt="image" src="https://github.com/user-attachments/assets/32dbcb40-8df6-4702-9ae6-f06a0496e881" />
+
+- MAX30105 感測器
+- <img width="349" height="533" alt="image" src="https://github.com/user-attachments/assets/05533de5-9eef-434a-85d4-ec18f47e1dbc" />
+
+- 0.96 吋 128x64 I2C OLED（位址 `0x3C`）
+- <img width="470" height="482" alt="image" src="https://github.com/user-attachments/assets/f64dc1ef-f2ab-4fcc-b0ec-9d9b145b6452" />
+
 - 小型無源蜂鳴器（buzzer）
 
 專案內現有檔案：
 
 - 程式碼：[main.cpp](D:/OneDrive/00_待辦工作與計畫/20260612-國中生到校試探-血氧偵測計_esp32/main.cpp)
 - 電路圖（Fritzing）：[Oxygen_Saturation.fzz](D:/OneDrive/00_待辦工作與計畫/20260612-國中生到校試探-血氧偵測計_esp32/Oxygen_Saturation.fzz)
+<img width="814" height="760" alt="image" src="https://github.com/user-attachments/assets/78a6fb26-babd-47d7-b7d1-a85cf856c0e5" />
+
 - ESP32 針腳圖：[esp32_pin_out.png](D:/OneDrive/00_待辦工作與計畫/20260612-國中生到校試探-血氧偵測計_esp32/esp32_pin_out.png)
+<img width="930" height="447" alt="image" src="https://github.com/user-attachments/assets/0c66577f-082f-42a8-a827-15bc3fa19764" />
 
 ---
 
